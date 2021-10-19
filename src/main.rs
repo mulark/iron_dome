@@ -92,9 +92,32 @@ fn postprocess(testcase: &str) -> Result<(), Box<dyn Error>> {
         }
     });
 
-    let img = dilate(&img, Norm::L1, 1);
-    img.save(testcase.to_owned() + "-3.png")?;
+    // find blob size
+    for (x, y, px) in img.enumerate_pixels().map(|(x, y, px)| (x, y, px[0])) {
+        
+    }
 
+    let img = open(&img, Norm::LInf, 1);
+    img.save(testcase.to_owned() + "-3.png")?;
+    /*
+        let img: GrayImage = map_pixels(&img, |w, h, pixel| {
+            if pixel.0[0] == 255 {
+                return Luma([255; 1]);
+            }
+            if h > 0 && w > 0 && h < 1079 && w < 1919 {
+                let p1 = img.get_pixel(w, h - 1).0[0] == 255;
+                let p2 = img.get_pixel(w, h + 1).0[0] == 255;
+                let p3 = img.get_pixel(w - 1, h).0[0] == 255;
+                let p4 = img.get_pixel(w + 1, h).0[0] == 255;
+                if (p1 && p3) || (p2 && p3) || (p1 && p4) || (p2 && p4) {
+                    // If on inner edge of a corner, set self to white
+                    return Luma([255; 1]);
+                }
+            }
+            Luma([0; 1])
+        });
+        img.save(testcase.to_owned() + "-4.png")?;
+    */
     Ok(())
 }
 
