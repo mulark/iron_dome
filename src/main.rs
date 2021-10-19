@@ -1,5 +1,7 @@
 use captrs::Capturer;
+use image::GrayImage;
 use image::Rgb;
+use imageproc::filter::sharpen3x3;
 
 use std::error::Error;
 
@@ -60,25 +62,23 @@ fn capture_frame() -> (Vec<Vec<Rgb<u8>>>, (usize, usize)) {
 }
 
 use image::io::Reader as ImageReader;
+use image::Luma;
 use imageproc::distance_transform::Norm;
 use imageproc::map::*;
 use imageproc::morphology::*;
-use image::Luma;
 
 fn postprocess(testcase: &str) -> Result<(), Box<dyn Error>> {
     let file = testcase.to_owned() + ".png";
     let img = ImageReader::open(&file)?.decode()?.to_rgb8();
-    let img = map_pixels(&img, |_w, _h, pixel| {
-        let (r,g,b) = unsafe { std::mem::transmute::<[u8;3], (u8,u8,u8)>(pixel.0) };
-        if r > 150 && g < 25 && b < 50 && g > 0xb {
-            Rgb([255, 255, 255])
+    let img: GrayImage = map_pixels(&img, |_w, _h, pixel| {
+        let (r, g, b) = unsafe { std::mem::transmute::<[u8; 3], (u8, u8, u8)>(pixel.0) };
+        if r > 150 && g < 30 && b < 36 && g > 11 && b > 14 {
+            Luma([255; 1])
         } else {
-            Rgb([0, 0, 0])
+            Luma([0; 1])
         }
     });
-    let img = red_channel(&img);
-    img.to_rgb8().save(testcase.to_owned() + "-1.png")?;
-
+    img.save(testcase.to_owned() + "-1.png")?;
     let img = map_pixels(&img, |w, h, pixel| {
         let mut num = 0;
         num += (img.get_pixel(w, h - 1).0[0] == 0) as u8;
@@ -125,6 +125,9 @@ mod tests {
 
     #[test]
     fn test() {
-        assert_eq!(std::mem::size_of::<[u8;3]>(), std::mem::size_of::<(u8, u8, u8)>())
+        assert_eq!(
+            std::mem::size_of::<[u8; 3]>(),
+            std::mem::size_of::<(u8, u8, u8)>()
+        )
     }
 }
