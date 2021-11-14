@@ -3,8 +3,8 @@
 Factorio artillery clicker
 
 ## Deps
-Rust (Obviously)
-Need xdotool installed
+* Rust (Obviously)
+* Need xdotool installed
 
 ## Usage
 ``` cargo run --release ```
