@@ -151,7 +151,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (bbs, spawner_width) = process_red(&mut img);
     let red_clicks = gen_clicks_from_bbs_rand(
         &bbs,
-        (spawner_width as f64 * 0.50) as u32,
+        (spawner_width as f64 * 0.43) as u32,
         img.width(),
         img.height(),
     );
@@ -166,7 +166,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         combined_bbs.len(),
         random.len()
     );
-    click_arty(&red_clicks)?;
+    if random.len() > 0 {
+        click_arty(&random)?;
+    } else {
+        click_arty(&red_clicks)?;
+    }
 
     Ok(())
 }
