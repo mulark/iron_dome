@@ -1,156 +1,273 @@
+use crate::legit::process_red;
 use captrs::Capturer;
-use image::GrayImage;
 use image::Rgb;
-use imageproc::filter::sharpen3x3;
+use image::RgbImage;
+use rand::seq::SliceRandom;
+use rand::Rng;
+
+#[allow(unused_imports)]
+pub(crate) use image::io::Reader as ImageReader;
 
 use std::error::Error;
 
-const EXCLUSION_BOX: isize = 24;
+mod legit;
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let (bytes, coord) = capture_frame();
-    let mut click_coords: Vec<(isize, isize)> = Vec::new();
-    for h in 0..coord.1 {
-        'next_px: for w in 0..coord.0 {
-            let px = bytes[w][h];
-            for click in click_coords.iter() {
-                if isize::abs(w as isize - click.0) < EXCLUSION_BOX
-                    && isize::abs(h as isize - click.1) < EXCLUSION_BOX
-                {
-                    continue 'next_px;
+mod debug;
+use debug::get_debug_spawner_clicks;
+use debug::get_debug_worm_clicks;
+use debug::remap_clicks_to_bb;
+mod screen;
+use screen::BoundingBox;
+use screen::Coord;
+
+const ARTY_REMOTE_RADIUS: u32 = 40;
+const NUM_RANDOM_GUESSES: usize = 10;
+const NUM_RANDOM_SAMPLES: usize = 1000;
+
+fn gen_clicks_from_bbs_rand(bbs: &[BoundingBox], remote_radius: u32, w: u32, h: u32) -> Vec<Coord> {
+    let mut rng = rand::thread_rng();
+
+    let mut bbs: Vec<BoundingBox> = bbs.to_vec();
+    let mut best_clicks = vec![];
+    'guess_again: for _ in 0..NUM_RANDOM_GUESSES {
+        bbs.shuffle(&mut rng);
+        let mut bbs: Vec<BoundingBox> = bbs.clone();
+        let mut current_clicks = vec![];
+        while !bbs.is_empty() {
+            let bb = bbs.pop().unwrap();
+            // Default to click the corner
+            let mut best_click = bb.left_top;
+            let mut best_hits = 0;
+            for _ in 0..NUM_RANDOM_SAMPLES {
+                // Generate a new random click, that likely hits this bb
+                let test_click = Coord {
+                    w: rng
+                        .gen_range(
+                            (bb.left_top.w - remote_radius as i64)
+                                ..=(bb.right_bottom.w + remote_radius as i64),
+                        )
+                        .clamp(0, w as i64),
+                    h: rng
+                        .gen_range(
+                            (bb.left_top.h - remote_radius as i64)
+                                ..=(bb.right_bottom.h + remote_radius as i64),
+                        )
+                        .clamp(0, h as i64),
+                };
+                if bb.collides_with_circle(test_click, remote_radius) {
+                    // We must hit self, regardless of how many other bbs we might hit
+                    let bbs = &bbs;
+                    let hits = count_collisions_single(&bbs, remote_radius, test_click) + 1;
+                    if hits > best_hits {
+                        best_click = test_click;
+                        best_hits = hits;
+                    }
                 }
             }
-            let r = px.0[0];
-            let g = px.0[1];
-            let b = px.0[2];
-            if (r == 0 || (r == 0xff && false)) && g == 0 && b == 0xff {
-                click_coords.push((w as isize, h as isize));
+            current_clicks.push(best_click);
+            if current_clicks.len() > best_clicks.len() && !best_clicks.is_empty() {
+                continue 'guess_again;
+            }
+            // Remove anything hit by the most recent click
+            bbs.retain(|bb| {
+                if let Some(click) = current_clicks.last() {
+                    if bb.collides_with_circle(*click, remote_radius) {
+                        return false;
+                    }
+                }
+                true
+            });
+        }
+
+        if current_clicks.len() < best_clicks.len()
+            || (best_clicks.is_empty() && !current_clicks.is_empty())
+        {
+            println!(
+                "Updating {} with {}",
+                best_clicks.len(),
+                current_clicks.len()
+            );
+            best_clicks = current_clicks;
+        }
+    }
+    best_clicks
+}
+
+fn count_collisions_single(bbs: &[BoundingBox], remote_radius: u32, click: Coord) -> usize {
+    let mut ct = 0;
+    for bb in bbs {
+        if !bb.tagged {
+            if bb.collides_with_circle(click, remote_radius) {
+                ct += 1;
             }
         }
     }
+    ct
+}
 
-    println!("Generated {} clicks", click_coords.len());
-    let mut cmd = String::new();
-    for click in click_coords {
-        cmd.push_str(&format!("mousemove {} {} click 1 ", click.0, click.1));
-    }
-    println!("{}", cmd);
-    let o = std::process::Command::new("xdotool")
-        .args(cmd.split_whitespace())
-        .output()?;
-    println!("{:?}", o);
+fn main() -> Result<(), Box<dyn Error>> {
+    println!("Spawned");
+    let mut img = capture_image();
+    println!("Got image");
+
+    let clicks = get_debug_spawner_clicks(&img);
+    let worm_clicks = get_debug_worm_clicks(&img);
+
+    //img.save("blah.png")?;
+
+    let spawner_mask = BoundingBox {
+        tagged: false,
+        left_top: Coord { w: -30, h: -11 },
+        right_bottom: Coord { w: 23, h: 31 },
+    };
+    let spawner_bbs = remap_clicks_to_bb(&clicks, &spawner_mask, &mut img);
+
+    let worm_mask = BoundingBox {
+        tagged: false,
+        left_top: Coord { w: -8, h: 1 },
+        right_bottom: Coord { w: 15, h: 22 },
+    };
+    let worm_bbs = remap_clicks_to_bb(&worm_clicks, &worm_mask, &mut img);
+    let mut combined_bbs = spawner_bbs.clone();
+    combined_bbs.extend(&worm_bbs);
+
+    let mut sorted_combined_bbs = combined_bbs.clone();
+    sorted_combined_bbs.sort_by(|s, other| {
+        let res = if s.left_top.h == other.left_top.h {
+            s.left_top.w.cmp(&other.left_top.h)
+        } else {
+            s.left_top.h.cmp(&other.left_top.h)
+        };
+        res
+    });
+
+    let random = gen_clicks_from_bbs_rand(
+        &sorted_combined_bbs,
+        ARTY_REMOTE_RADIUS,
+        img.width(),
+        img.height(),
+    );
+    println!("Proccing red");
+    let (bbs, spawner_width) = process_red(&mut img);
+    let red_clicks = gen_clicks_from_bbs_rand(
+        &bbs,
+        (spawner_width as f64 * 0.50) as u32,
+        img.width(),
+        img.height(),
+    );
+    println!(
+        "{} targets, {} clicks with red clicker",
+        bbs.len(),
+        red_clicks.len()
+    );
+
+    println!(
+        "{} targets, {} clicks with random deduper",
+        combined_bbs.len(),
+        random.len()
+    );
+    click_arty(&red_clicks)?;
 
     Ok(())
 }
 
-fn capture_frame() -> (Vec<Vec<Rgb<u8>>>, (usize, usize)) {
+#[allow(dead_code)]
+fn click_arty(clicks: &[Coord]) -> Result<(), Box<(dyn Error)>> {
+    let mut cmd = String::new();
+    for click in clicks {
+        cmd.push_str(&format!("mousemove {} {} click 1 ", click.w, click.h));
+    }
+    println!("{}", cmd);
+    let _o = std::process::Command::new("xdotool")
+        .args(cmd.split_whitespace())
+        .output()?;
+    Ok(())
+}
+
+fn capture_image() -> RgbImage {
     let mut c = Capturer::new(0).unwrap();
 
     let bytes = c.capture_frame().unwrap();
+    let bytes = bytes
+        .into_iter()
+        .map(|bgr| [bgr.r, bgr.g, bgr.b])
+        .flatten()
+        .collect::<Vec<u8>>();
     let geometry = c.geometry();
-    let mut img_bytes: Vec<Vec<Rgb<u8>>> =
-        vec![Vec::with_capacity(geometry.1 as usize); geometry.0 as usize];
-    for (i, by) in bytes.iter().enumerate() {
-        let w = i % geometry.0 as usize;
-        let _h = i / geometry.0 as usize;
-        img_bytes[w].push(Rgb {
-            0: [by.r, by.g, by.b],
-        });
-    }
 
-    (img_bytes, (geometry.0 as usize, geometry.1 as usize))
+    let i = RgbImage::from_raw(geometry.0, geometry.1, bytes).unwrap();
+    //i.save("red.png").unwrap();
+
+    /*let i = ImageReader::open("zoom/z2.png")
+        .unwrap()
+        .decode()
+        .unwrap()
+        .to_rgb8();*/
+    i
 }
 
-use image::io::Reader as ImageReader;
-use image::Luma;
-use imageproc::distance_transform::Norm;
-use imageproc::map::*;
-use imageproc::morphology::*;
-
-fn postprocess(testcase: &str) -> Result<(), Box<dyn Error>> {
-    let file = testcase.to_owned() + ".png";
-    let img = ImageReader::open(&file)?.decode()?.to_rgb8();
-    let img: GrayImage = map_pixels(&img, |_w, _h, pixel| {
-        let (r, g, b) = unsafe { std::mem::transmute::<[u8; 3], (u8, u8, u8)>(pixel.0) };
-        if r > 150 && g < 30 && b < 36 && g > 11 && b > 14 {
-            Luma([255; 1])
-        } else {
-            Luma([0; 1])
+fn draw_bbs(bbs: &[BoundingBox]) {
+    let mut i = RgbImage::new(1920, 1080);
+    for bb in bbs {
+        let shift = bb.area() as u8;
+        for w in bb.left_top.w..=bb.right_bottom.w {
+            if w < 0 || bb.left_top.h < 0 {
+                continue;
+            }
+            if w as u32 >= 1920 || bb.right_bottom.h as u32 >= 1080 {
+                continue;
+            }
+            i.put_pixel(w as u32, bb.left_top.h as u32, Rgb([shift, shift, 0xff]));
+            i.put_pixel(
+                w as u32,
+                bb.right_bottom.h as u32,
+                Rgb([shift, shift, 0xff]),
+            );
         }
-    });
-    img.save(testcase.to_owned() + "-1.png")?;
-    let img = map_pixels(&img, |w, h, pixel| {
-        let mut num = 0;
-        num += (img.get_pixel(w, h - 1).0[0] == 0) as u8;
-        num += (img.get_pixel(w, h + 1).0[0] == 0) as u8;
-        num += (img.get_pixel(w - 1, h).0[0] == 0) as u8;
-        num += (img.get_pixel(w + 1, h).0[0] == 0) as u8;
-        if num > 3 {
-            Luma([0; 1])
-        } else {
-            Luma([255; 1])
+        for h in bb.left_top.h..=bb.right_bottom.h {
+            if bb.right_bottom.w < 0 || h < 0 {
+                continue;
+            }
+            if bb.right_bottom.w as u32 >= 1920 || h as u32 >= 1080 {
+                continue;
+            }
+            i.put_pixel(bb.left_top.w as u32, h as u32, Rgb([shift, shift, 0xff]));
+            i.put_pixel(
+                bb.right_bottom.w as u32,
+                h as u32,
+                Rgb([shift, shift, 0xff]),
+            );
         }
-    });
-
-    // find blob size
-    for (x, y, px) in img.enumerate_pixels().map(|(x, y, px)| (x, y, px[0])) {
-        
     }
-
-    let img = open(&img, Norm::LInf, 1);
-    img.save(testcase.to_owned() + "-3.png")?;
-    /*
-        let img: GrayImage = map_pixels(&img, |w, h, pixel| {
-            if pixel.0[0] == 255 {
-                return Luma([255; 1]);
-            }
-            if h > 0 && w > 0 && h < 1079 && w < 1919 {
-                let p1 = img.get_pixel(w, h - 1).0[0] == 255;
-                let p2 = img.get_pixel(w, h + 1).0[0] == 255;
-                let p3 = img.get_pixel(w - 1, h).0[0] == 255;
-                let p4 = img.get_pixel(w + 1, h).0[0] == 255;
-                if (p1 && p3) || (p2 && p3) || (p1 && p4) || (p2 && p4) {
-                    // If on inner edge of a corner, set self to white
-                    return Luma([255; 1]);
-                }
-            }
-            Luma([0; 1])
-        });
-        img.save(testcase.to_owned() + "-4.png")?;
-    */
-    Ok(())
+    i.save("bbs.png").unwrap();
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::postprocess;
-    use std::fs::read_dir;
+    use crate::debug::get_debug_enemy_clicks;
+    use crate::legit::process_red;
+    use crate::ImageReader;
 
     #[test]
-    fn test_red() {
-        for f in read_dir("testcases").unwrap() {
-            let p = f.unwrap().path();
-            println!("{:?}", p);
-            let testcase = format!("testcases/{}", p.file_stem().unwrap().to_string_lossy());
-            if testcase.contains('-') {
-                std::fs::remove_file(testcase + ".png").unwrap();
-            }
-        }
-        for f in read_dir("testcases").unwrap() {
-            let p = f.unwrap().path();
-            println!("{:?}", p);
-            let testcase = format!("testcases/{}", p.file_stem().unwrap().to_string_lossy());
-            if !testcase.contains('-') {
-                postprocess(&testcase).unwrap();
-            }
-        }
+    fn test_scan_rects() {
+        let mut i = ImageReader::open("zoom/z10.png")
+            .unwrap()
+            .decode()
+            .unwrap()
+            .into_rgb8();
+        let bbs = process_red(&mut i);
+        println!("Found {} targets from red", bbs.0.len());
     }
 
     #[test]
-    fn test() {
-        assert_eq!(
-            std::mem::size_of::<[u8; 3]>(),
-            std::mem::size_of::<(u8, u8, u8)>()
-        )
+    fn test_img_readstuff() {
+        let i = ImageReader::open("zoom/z1.png")
+            .unwrap()
+            .decode()
+            .unwrap()
+            .to_rgb8();
+
+        let clicks = get_debug_enemy_clicks(&i);
+        println!("Found {} enemy targets", clicks.len());
     }
 }
