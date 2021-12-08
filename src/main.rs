@@ -20,6 +20,9 @@ mod screen;
 use screen::BoundingBox;
 use screen::Coord;
 
+const SCREEN_W: i64 = 2560;
+const SCREEN_H: i64 = 1440;
+
 const ARTY_REMOTE_RADIUS: u32 = 40;
 const NUM_RANDOM_GUESSES: usize = 10;
 const NUM_RANDOM_SAMPLES: usize = 1000;
@@ -108,10 +111,11 @@ fn count_collisions_single(bbs: &[BoundingBox], remote_radius: u32, click: Coord
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Spawned");
     let mut img = capture_image();
+    let mut debug_img = img.clone();
     println!("Got image");
 
-    let clicks = get_debug_spawner_clicks(&img);
-    let worm_clicks = get_debug_worm_clicks(&img);
+    let clicks = get_debug_spawner_clicks(&debug_img);
+    let worm_clicks = get_debug_worm_clicks(&debug_img);
 
     //img.save("blah.png")?;
 
@@ -120,14 +124,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         left_top: Coord { w: -30, h: -11 },
         right_bottom: Coord { w: 23, h: 31 },
     };
-    let spawner_bbs = remap_clicks_to_bb(&clicks, &spawner_mask, &mut img);
+    let spawner_bbs = remap_clicks_to_bb(&clicks, &spawner_mask, &mut debug_img);
 
     let worm_mask = BoundingBox {
         tagged: false,
         left_top: Coord { w: -8, h: 1 },
         right_bottom: Coord { w: 15, h: 22 },
     };
-    let worm_bbs = remap_clicks_to_bb(&worm_clicks, &worm_mask, &mut img);
+    let worm_bbs = remap_clicks_to_bb(&worm_clicks, &worm_mask, &mut debug_img);
     let mut combined_bbs = spawner_bbs.clone();
     combined_bbs.extend(&worm_bbs);
 
@@ -141,7 +145,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         res
     });
 
-    let random = gen_clicks_from_bbs_rand(
+    let mut random = gen_clicks_from_bbs_rand(
         &sorted_combined_bbs,
         ARTY_REMOTE_RADIUS,
         img.width(),
@@ -149,12 +153,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     println!("Proccing red");
     let (bbs, spawner_width) = process_red(&mut img);
-    let red_clicks = gen_clicks_from_bbs_rand(
+    let mut red_clicks = gen_clicks_from_bbs_rand(
         &bbs,
         (spawner_width as f64 * 0.43) as u32,
         img.width(),
         img.height(),
     );
+    remove_clicks_in_excluded_areas(&mut red_clicks);
+    remove_clicks_in_excluded_areas(&mut random);
     println!(
         "{} targets, {} clicks with red clicker",
         bbs.len(),
@@ -173,6 +179,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+fn remove_clicks_in_excluded_areas(clicks: &mut Vec<Coord>) {
+    clicks.retain(|click| !(click.h < (493 * SCREEN_H / 1080) && click.w > (1664 * SCREEN_W / 1920)) );
+    clicks.retain(|click| !(click.h > (985 * SCREEN_H / 1080) && click.w > (703 * SCREEN_W / 1920) && click.w < (1433 * SCREEN_W / 1920)) );
 }
 
 #[allow(dead_code)]
@@ -211,14 +222,20 @@ fn capture_image() -> RgbImage {
 }
 
 fn draw_bbs(bbs: &[BoundingBox]) {
-    let mut i = RgbImage::new(1920, 1080);
+    let mut i = RgbImage::new(SCREEN_W as u32, SCREEN_H as u32);
     for bb in bbs {
+        if bb.left_top.w < 0 || bb.left_top.h < 0 {
+            continue;
+        }
+        if bb.right_bottom.w >= SCREEN_W || bb.right_bottom.h >= SCREEN_H {
+            continue;
+        }
+        if bb.left_top.w >= SCREEN_W || bb.left_top.h >= SCREEN_H {
+            continue;
+        }
         let shift = bb.area() as u8;
-        for w in bb.left_top.w..=bb.right_bottom.w {
-            if w < 0 || bb.left_top.h < 0 {
-                continue;
-            }
-            if w as u32 >= 1920 || bb.right_bottom.h as u32 >= 1080 {
+        for w in bb.left_top.w..bb.right_bottom.w {
+            if w >= SCREEN_W {
                 continue;
             }
             i.put_pixel(w as u32, bb.left_top.h as u32, Rgb([shift, shift, 0xff]));
@@ -228,11 +245,8 @@ fn draw_bbs(bbs: &[BoundingBox]) {
                 Rgb([shift, shift, 0xff]),
             );
         }
-        for h in bb.left_top.h..=bb.right_bottom.h {
-            if bb.right_bottom.w < 0 || h < 0 {
-                continue;
-            }
-            if bb.right_bottom.w as u32 >= 1920 || h as u32 >= 1080 {
+        for h in bb.left_top.h..bb.right_bottom.h {
+            if h >= SCREEN_H {
                 continue;
             }
             i.put_pixel(bb.left_top.w as u32, h as u32, Rgb([shift, shift, 0xff]));
