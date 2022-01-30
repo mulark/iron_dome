@@ -1,4 +1,5 @@
 use crate::legit::process_red;
+use crate::visualization::VisualizedImage;
 use captrs::Capturer;
 use image::Rgb;
 use image::RgbImage;
@@ -19,6 +20,8 @@ use debug::remap_clicks_to_bb;
 mod screen;
 use screen::BoundingBox;
 use screen::Coord;
+
+mod visualization;
 
 const SCREEN_W: i64 = 2560;
 const SCREEN_H: i64 = 1440;
@@ -110,14 +113,13 @@ fn count_collisions_single(bbs: &[BoundingBox], remote_radius: u32, click: Coord
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Spawned");
-    let mut img = capture_image();
+    let img = capture_image();
     let mut debug_img = img.clone();
+    let mut img = VisualizedImage::new(img);
     println!("Got image");
 
     let clicks = get_debug_spawner_clicks(&debug_img);
     let worm_clicks = get_debug_worm_clicks(&debug_img);
-
-    //img.save("blah.png")?;
 
     let spawner_mask = BoundingBox {
         tagged: false,
@@ -265,14 +267,16 @@ mod tests {
     use crate::debug::get_debug_enemy_clicks;
     use crate::legit::process_red;
     use crate::ImageReader;
+    use crate::visualization::VisualizedImage;
 
     #[test]
     fn test_scan_rects() {
-        let mut i = ImageReader::open("zoom/z10.png")
+        let i = ImageReader::open("zoom/z3.png")
             .unwrap()
             .decode()
             .unwrap()
             .into_rgb8();
+        let mut i = VisualizedImage::new(i);
         let bbs = process_red(&mut i);
         println!("Found {} targets from red", bbs.0.len());
     }

@@ -12,3 +12,4 @@ bmp = "0.5"
 image = "*"
 imageproc = {version = "*", features=["display-window"] }
 rand = "0.8.4"
+webp-animation = "*"
