@@ -2,6 +2,8 @@
 
 Factorio artillery clicker
 
+Takes a screenshot of the current game screen and then looks for any biter nests/worms. Automatically clicks the game screen to fire artillery shells on detected targets, and tries to avoid wasting shells.
+
 ## Deps
 * Rust (Obviously)
 * Need xdotool installed
