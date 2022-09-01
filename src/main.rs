@@ -4,6 +4,7 @@ use image::Rgb;
 use image::RgbImage;
 use rand::seq::SliceRandom;
 use rand::Rng;
+use std::sync::{Arc, Mutex};
 
 #[allow(unused_imports)]
 pub(crate) use image::io::Reader as ImageReader;
@@ -28,72 +29,78 @@ const NUM_RANDOM_GUESSES: usize = 10;
 const NUM_RANDOM_SAMPLES: usize = 1000;
 
 fn gen_clicks_from_bbs_rand(bbs: &[BoundingBox], remote_radius: u32, w: u32, h: u32) -> Vec<Coord> {
-    let mut rng = rand::thread_rng();
+    let bbs: Vec<BoundingBox> = bbs.to_vec();
+    let clicks: Arc<Mutex<Vec<Vec<Coord>>>> = Arc::new(Mutex::new(vec![]));
 
-    let mut bbs: Vec<BoundingBox> = bbs.to_vec();
-    let mut best_clicks = vec![];
-    'guess_again: for _ in 0..NUM_RANDOM_GUESSES {
-        bbs.shuffle(&mut rng);
-        let mut bbs: Vec<BoundingBox> = bbs.clone();
-        let mut current_clicks = vec![];
-        while !bbs.is_empty() {
-            let bb = bbs.pop().unwrap();
-            // Default to click the corner
-            let mut best_click = bb.left_top;
-            let mut best_hits = 0;
-            for _ in 0..NUM_RANDOM_SAMPLES {
-                // Generate a new random click, that likely hits this bb
-                let test_click = Coord {
-                    w: rng
-                        .gen_range(
-                            (bb.left_top.w - remote_radius as i64)
-                                ..=(bb.right_bottom.w + remote_radius as i64),
-                        )
-                        .clamp(0, w as i64),
-                    h: rng
-                        .gen_range(
-                            (bb.left_top.h - remote_radius as i64)
-                                ..=(bb.right_bottom.h + remote_radius as i64),
-                        )
-                        .clamp(0, h as i64),
-                };
-                if bb.collides_with_circle(test_click, remote_radius) {
-                    // We must hit self, regardless of how many other bbs we might hit
-                    let bbs = &bbs;
-                    let hits = count_collisions_single(&bbs, remote_radius, test_click) + 1;
-                    if hits > best_hits {
-                        best_click = test_click;
-                        best_hits = hits;
-                    }
-                }
-            }
-            current_clicks.push(best_click);
-            if current_clicks.len() > best_clicks.len() && !best_clicks.is_empty() {
-                continue 'guess_again;
-            }
-            // Remove anything hit by the most recent click
-            bbs.retain(|bb| {
-                if let Some(click) = current_clicks.last() {
-                    if bb.collides_with_circle(*click, remote_radius) {
-                        return false;
-                    }
-                }
-                true
-            });
-        }
+    std::thread::scope(|scope| {
+        let mut returns = vec![];
+        for _ in 0..NUM_RANDOM_GUESSES {
+            let mut bbs: Vec<BoundingBox> = bbs.clone();
+            let clicks = clicks.clone();
 
-        if current_clicks.len() < best_clicks.len()
-            || (best_clicks.is_empty() && !current_clicks.is_empty())
-        {
-            println!(
-                "Updating {} with {}",
-                best_clicks.len(),
-                current_clicks.len()
-            );
-            best_clicks = current_clicks;
+            returns.push(scope.spawn(move || {
+                let mut rng = rand::thread_rng();
+                bbs.shuffle(&mut rng);
+
+                let mut current_clicks = vec![];
+                while !bbs.is_empty() {
+                    let bb = bbs.pop().unwrap();
+                    // Default to click the corner
+                    let mut best_click = bb.left_top;
+                    let mut best_hits = 0;
+                    for _ in 0..NUM_RANDOM_SAMPLES {
+                        // Generate a new random click, that likely hits this bb
+                        let test_click = Coord {
+                            w: rng
+                                .gen_range(
+                                    (bb.left_top.w - remote_radius as i64)
+                                        ..=(bb.right_bottom.w + remote_radius as i64),
+                                )
+                                .clamp(0, w as i64),
+                            h: rng
+                                .gen_range(
+                                    (bb.left_top.h - remote_radius as i64)
+                                        ..=(bb.right_bottom.h + remote_radius as i64),
+                                )
+                                .clamp(0, h as i64),
+                        };
+                        if bb.collides_with_circle(test_click, remote_radius) {
+                            // We must hit self, regardless of how many other bbs we might hit
+                            let bbs = &bbs;
+                            let hits = count_collisions_single(&bbs, remote_radius, test_click) + 1;
+                            if hits > best_hits {
+                                best_click = test_click;
+                                best_hits = hits;
+                            }
+                        }
+                    }
+                    current_clicks.push(best_click);
+                    /*if current_clicks.len() > best_clicks.len() && !best_clicks.is_empty() {
+                        break;
+                    }*/
+                    // Remove anything hit by the most recent click
+                    bbs.retain(|bb| {
+                        if let Some(click) = current_clicks.last() {
+                            if bb.collides_with_circle(*click, remote_radius) {
+                                return false;
+                            }
+                        }
+                        true
+                    });
+                }
+                clicks.lock().unwrap().push(current_clicks);
+            }));
         }
-    }
-    best_clicks
+    });
+
+    // Take the found clicks out
+    let v = Arc::try_unwrap(clicks).unwrap().into_inner().unwrap();
+
+    println!(
+        "Threads found {:#?} clicks",
+        v.iter().map(|bucket| bucket.len()).collect::<Vec<_>>()
+    );
+    v.into_iter().min_by_key(|bucket| bucket.len()).unwrap()
 }
 
 fn count_collisions_single(bbs: &[BoundingBox], remote_radius: u32, click: Coord) -> usize {
