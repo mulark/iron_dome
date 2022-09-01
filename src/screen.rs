@@ -24,11 +24,9 @@ impl BoundingBox {
     }
 
     pub fn collides_with_circle(&self, pos: Coord, radius: u32) -> bool {
-        /*if pos.w >= self.left_top.w && pos.w <= self.right_bottom.w && pos.h >= self.left_top.h && pos.h <= self.right_bottom.h {
-            // Circle is within the BB
-            return true;
-        }*/
-
+        if !self.is_close_enough_to_collide(pos, radius as i64) {
+            return false;
+        }
         let (mut testx, mut testy) = (pos.w, pos.h);
         // Find closest edge
         if self.left_top.w > pos.w {
@@ -53,6 +51,13 @@ impl BoundingBox {
             return true;
         }
         false
+    }
+
+    pub fn is_close_enough_to_collide(&self, pos: Coord, radius: i64) -> bool {
+        pos.w > self.left_top.w - radius
+            && pos.w < self.right_bottom.w + radius
+            && pos.h > self.left_top.h - radius
+            && pos.h < self.right_bottom.w + radius
     }
 
     pub fn area(&self) -> i64 {
