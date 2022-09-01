@@ -172,6 +172,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         combined_bbs.len(),
         random.len()
     );
+    red_clicks.sort_by(|first, second| first.h.cmp(&(second.h)));
     if random.len() > 0 {
         click_arty(&random)?;
     } else {
@@ -182,8 +183,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn remove_clicks_in_excluded_areas(clicks: &mut Vec<Coord>) {
-    clicks.retain(|click| !(click.h < (493 * SCREEN_H / 1080) && click.w > (1664 * SCREEN_W / 1920)) );
-    clicks.retain(|click| !(click.h > (985 * SCREEN_H / 1080) && click.w > (703 * SCREEN_W / 1920) && click.w < (1433 * SCREEN_W / 1920)) );
+    clicks
+        .retain(|click| !(click.h < (493 * SCREEN_H / 1080) && click.w > (1664 * SCREEN_W / 1920)));
+    clicks.retain(|click| {
+        !(click.h > (985 * SCREEN_H / 1080)
+            && click.w > (703 * SCREEN_W / 1920)
+            && click.w < (1433 * SCREEN_W / 1920))
+    });
 }
 
 #[allow(dead_code)]
@@ -192,7 +198,7 @@ fn click_arty(clicks: &[Coord]) -> Result<(), Box<(dyn Error)>> {
     for click in clicks {
         cmd.push_str(&format!("mousemove {} {} click 1 ", click.w, click.h));
     }
-    println!("{}", cmd);
+
     let _o = std::process::Command::new("xdotool")
         .args(cmd.split_whitespace())
         .output()?;
