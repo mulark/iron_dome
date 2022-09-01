@@ -226,7 +226,7 @@ fn capture_image() -> RgbImage {
     let i = RgbImage::from_raw(geometry.0, geometry.1, bytes).unwrap();
     //i.save("red.png").unwrap();
 
-    /*let i = ImageReader::open("zoom/z2.png")
+    /*let i = ImageReader::open("hard.png")
         .unwrap()
         .decode()
         .unwrap()
