@@ -1,6 +1,5 @@
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Default)]
 pub struct BoundingBox {
-    pub tagged: bool,
     pub left_top: Coord,
     pub right_bottom: Coord,
 }
@@ -8,7 +7,6 @@ pub struct BoundingBox {
 impl BoundingBox {
     pub fn new(left_top: Coord, w: i64, h: i64) -> Self {
         Self {
-            tagged: false,
             left_top,
             right_bottom: Coord {
                 w: left_top.w + w,

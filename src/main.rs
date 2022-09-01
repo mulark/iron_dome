@@ -28,6 +28,11 @@ const ARTY_REMOTE_RADIUS: u32 = 40;
 const NUM_RANDOM_GUESSES: usize = 10;
 const NUM_RANDOM_SAMPLES: usize = 1000;
 
+/// Generate clicks from a set of bounding boxes
+/// bbs: a slice of BoundingBox objects to target
+/// remote_radius: estimated size of the artillery remote target area (in pixels)
+/// w: width of the image in pixels (to keep generated clicks in bounds)
+/// h: height of the image in pixels (to keep generated clicks in bounds)
 fn gen_clicks_from_bbs_rand(bbs: &[BoundingBox], remote_radius: u32, w: u32, h: u32) -> Vec<Coord> {
     let bbs: Vec<BoundingBox> = bbs.to_vec();
     let clicks: Arc<Mutex<Vec<Vec<Coord>>>> = Arc::new(Mutex::new(vec![]));
@@ -106,10 +111,8 @@ fn gen_clicks_from_bbs_rand(bbs: &[BoundingBox], remote_radius: u32, w: u32, h: 
 fn count_collisions_single(bbs: &[BoundingBox], remote_radius: u32, click: Coord) -> usize {
     let mut ct = 0;
     for bb in bbs {
-        if !bb.tagged {
-            if bb.collides_with_circle(click, remote_radius) {
-                ct += 1;
-            }
+        if bb.collides_with_circle(click, remote_radius) {
+            ct += 1;
         }
     }
     ct
@@ -127,14 +130,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     //img.save("blah.png")?;
 
     let spawner_mask = BoundingBox {
-        tagged: false,
         left_top: Coord { w: -30, h: -11 },
         right_bottom: Coord { w: 23, h: 31 },
     };
     let spawner_bbs = remap_clicks_to_bb(&clicks, &spawner_mask, &mut debug_img);
 
     let worm_mask = BoundingBox {
-        tagged: false,
         left_top: Coord { w: -8, h: 1 },
         right_bottom: Coord { w: 15, h: 22 },
     };

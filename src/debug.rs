@@ -68,7 +68,6 @@ pub fn remap_clicks_to_bb(
     let bounding_boxes = clicks
         .iter()
         .map(|click| BoundingBox {
-            tagged: false,
             left_top: Coord {
                 w: click.w + bb_mask.left_top.w,
                 h: click.h + bb_mask.left_top.h,
