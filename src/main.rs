@@ -34,13 +34,19 @@ const NUM_RANDOM_SAMPLES: usize = 1000;
 /// w: width of the image in pixels (to keep generated clicks in bounds)
 /// h: height of the image in pixels (to keep generated clicks in bounds)
 fn gen_clicks_from_bbs_rand(bbs: &[BoundingBox], remote_radius: u32, w: u32, h: u32) -> Vec<Coord> {
-    let bbs: Vec<BoundingBox> = bbs.to_vec();
     let clicks: Arc<Mutex<Vec<Vec<Coord>>>> = Arc::new(Mutex::new(vec![]));
+
+    println!(
+        "{} * {} = {}",
+        std::mem::size_of::<BoundingBox>(),
+        bbs.len(),
+        std::mem::size_of::<BoundingBox>() * bbs.len()
+    );
 
     std::thread::scope(|scope| {
         let mut returns = vec![];
         for _ in 0..NUM_RANDOM_GUESSES {
-            let mut bbs: Vec<BoundingBox> = bbs.clone();
+            let mut bbs: Vec<BoundingBox> = bbs.to_vec();
             let clicks = clicks.clone();
 
             returns.push(scope.spawn(move || {
@@ -126,8 +132,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let clicks = get_debug_spawner_clicks(&debug_img);
     let worm_clicks = get_debug_worm_clicks(&debug_img);
-
-    //img.save("blah.png")?;
 
     let spawner_mask = BoundingBox {
         left_top: Coord { w: -30, h: -11 },
@@ -224,14 +228,15 @@ fn capture_image() -> RgbImage {
         .collect::<Vec<u8>>();
     let geometry = c.geometry();
 
+    #[allow(unused_variables)]
     let i = RgbImage::from_raw(geometry.0, geometry.1, bytes).unwrap();
     //i.save("red.png").unwrap();
 
-    /*let i = ImageReader::open("hard.png")
+    let i = ImageReader::open("hard.png")
         .unwrap()
         .decode()
         .unwrap()
-        .to_rgb8();*/
+        .to_rgb8();
     i
 }
 
