@@ -2,8 +2,10 @@ use crate::legit::process_red;
 use captrs::Capturer;
 use image::Rgb;
 use image::RgbImage;
+use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::Rng;
+use rand::SeedableRng;
 use std::sync::{Arc, Mutex};
 
 #[allow(unused_imports)]
@@ -43,14 +45,17 @@ fn gen_clicks_from_bbs_rand(bbs: &[BoundingBox], remote_radius: u32, w: u32, h: 
         std::mem::size_of::<BoundingBox>() * bbs.len()
     );
 
+    let it = std::time::Instant::now();
+    let mut rng = SmallRng::seed_from_u64(0x1337133713371337);
+
     std::thread::scope(|scope| {
         let mut returns = vec![];
         for _ in 0..NUM_RANDOM_GUESSES {
             let mut bbs: Vec<BoundingBox> = bbs.to_vec();
             let clicks = clicks.clone();
+            let mut rng = SmallRng::from_rng(&mut rng).unwrap();
 
             returns.push(scope.spawn(move || {
-                let mut rng = rand::thread_rng();
                 bbs.shuffle(&mut rng);
 
                 let mut current_clicks = vec![];
@@ -106,11 +111,10 @@ fn gen_clicks_from_bbs_rand(bbs: &[BoundingBox], remote_radius: u32, w: u32, h: 
 
     // Take the found clicks out
     let v = Arc::try_unwrap(clicks).unwrap().into_inner().unwrap();
+    let mut counts = v.iter().map(|bucket| bucket.len()).collect::<Vec<_>>();
+    counts.sort();
 
-    println!(
-        "Threads found {:#?} clicks",
-        v.iter().map(|bucket| bucket.len()).collect::<Vec<_>>()
-    );
+    println!("Threads found {:#?} clicks in {:?}", counts, it.elapsed());
     v.into_iter().min_by_key(|bucket| bucket.len()).unwrap()
 }
 
