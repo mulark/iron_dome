@@ -23,6 +23,13 @@ impl BoundingBox {
         (lth..=rbh).flat_map(move |h| (ltw..=rbw).map(move |w| (w, h)))
     }
 
+    pub fn collides_with_point(&self, pos: Coord) -> bool {
+        pos.w >= self.left_top.w
+            && pos.w <= self.right_bottom.w
+            && pos.h >= self.left_top.h
+            && pos.h <= self.right_bottom.h
+    }
+
     pub fn collides_with_circle(&self, pos: Coord, radius: u32) -> bool {
         if !self.collides_fast_calc(pos, radius as i64) {
             return false;

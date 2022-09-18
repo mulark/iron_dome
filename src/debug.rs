@@ -19,24 +19,17 @@ const SPAWNER_DEBUG_MIN_CLICK_DIST: i64 = 30;
 /// Size in pixels of a worm magenta debug circle. Same size regardless of zoom level.
 const WORM_DEBUG_MIN_CLICK_DIST: i64 = 30;
 
-#[allow(dead_code)]
-pub fn get_debug_enemy_clicks(img: &RgbImage) -> Vec<Coord> {
-    let mut clicks = get_debug_worm_clicks(&img);
-    clicks.extend(get_debug_spawner_clicks(&img));
-    clicks
+pub fn find_worm_positions(img: &RgbImage) -> Vec<Coord> {
+    find_debug_positions(img, WORM_DEBUG_MIN_CLICK_DIST, Rgb([0xff, 0, 0xff]))
 }
 
-pub fn get_debug_worm_clicks(img: &RgbImage) -> Vec<Coord> {
-    generate_clicks(img, WORM_DEBUG_MIN_CLICK_DIST, Rgb([0xff, 0, 0xff]))
-}
-
-pub fn get_debug_spawner_clicks(img: &RgbImage) -> Vec<Coord> {
-    generate_clicks(img, SPAWNER_DEBUG_MIN_CLICK_DIST, Rgb([0, 0, 0xff]))
+pub fn find_spawner_positions(img: &RgbImage) -> Vec<Coord> {
+    find_debug_positions(img, SPAWNER_DEBUG_MIN_CLICK_DIST, Rgb([0, 0, 0xff]))
 }
 
 /// Generate clicks based on a image. Clicks must be spread min_click_dist apart
 /// pixel_classification function to find pixels of desired color to click
-fn generate_clicks(img: &RgbImage, min_click_dist: i64, pixel_color: Rgb<u8>) -> Vec<Coord> {
+fn find_debug_positions(img: &RgbImage, min_click_dist: i64, pixel_color: Rgb<u8>) -> Vec<Coord> {
     let mut clicks: Vec<Coord> = Vec::new();
 
     'next_px: for (w, h, px) in img.enumerate_pixels() {
@@ -60,7 +53,7 @@ fn generate_clicks(img: &RgbImage, min_click_dist: i64, pixel_color: Rgb<u8>) ->
 }
 
 /// Reformat a set of clicks into a list of bounding boxes
-pub fn remap_clicks_to_bb(
+pub fn remap_positions_to_bb(
     clicks: &[Coord],
     bb_mask: &BoundingBox,
     img: &mut RgbImage,

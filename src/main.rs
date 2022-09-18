@@ -2,13 +2,7 @@ use crate::legit::process_red;
 use captrs::Capturer;
 use image::Rgb;
 use image::RgbImage;
-use rand::rngs::SmallRng;
-use rand::seq::SliceRandom;
-use rand::Rng;
-use rand::SeedableRng;
-use std::sync::{Arc, Mutex};
 
-#[allow(unused_imports)]
 pub(crate) use image::io::Reader as ImageReader;
 
 use std::error::Error;
@@ -16,9 +10,14 @@ use std::error::Error;
 mod legit;
 
 mod debug;
-use debug::get_debug_spawner_clicks;
-use debug::get_debug_worm_clicks;
-use debug::remap_clicks_to_bb;
+use debug::find_spawner_positions;
+use debug::find_worm_positions;
+use debug::remap_positions_to_bb;
+
+mod generator;
+use generator::gen_clicks_from_bbs_fixed;
+use generator::gen_clicks_from_bbs_rand;
+
 mod screen;
 use screen::BoundingBox;
 use screen::Coord;
@@ -27,175 +26,136 @@ const SCREEN_W: i64 = 2560;
 const SCREEN_H: i64 = 1440;
 
 const ARTY_REMOTE_RADIUS: u32 = 40;
-const NUM_RANDOM_GUESSES: usize = 10;
-const NUM_RANDOM_SAMPLES: usize = 1000;
 
-/// Generate clicks from a set of bounding boxes
-/// bbs: a slice of BoundingBox objects to target
-/// remote_radius: estimated size of the artillery remote target area (in pixels)
-/// w: width of the image in pixels (to keep generated clicks in bounds)
-/// h: height of the image in pixels (to keep generated clicks in bounds)
-fn gen_clicks_from_bbs_rand(bbs: &[BoundingBox], remote_radius: u32, w: u32, h: u32) -> Vec<Coord> {
-    let clicks: Arc<Mutex<Vec<Vec<Coord>>>> = Arc::new(Mutex::new(vec![]));
-
-    println!(
-        "{} * {} = {}",
-        std::mem::size_of::<BoundingBox>(),
-        bbs.len(),
-        std::mem::size_of::<BoundingBox>() * bbs.len()
-    );
-
-    let it = std::time::Instant::now();
-    let mut rng = SmallRng::seed_from_u64(0x1337133713371337);
-
-    std::thread::scope(|scope| {
-        let mut returns = vec![];
-        for _ in 0..NUM_RANDOM_GUESSES {
-            let mut bbs: Vec<BoundingBox> = bbs.to_vec();
-            let clicks = clicks.clone();
-            let mut rng = SmallRng::from_rng(&mut rng).unwrap();
-
-            returns.push(scope.spawn(move || {
-                bbs.shuffle(&mut rng);
-
-                let mut current_clicks = vec![];
-                while !bbs.is_empty() {
-                    let bb = bbs.pop().unwrap();
-                    // Default to click the corner
-                    let mut best_click = bb.left_top;
-                    let mut best_hits = 0;
-                    for _ in 0..NUM_RANDOM_SAMPLES {
-                        // Generate a new random click, that likely hits this bb
-                        let test_click = Coord {
-                            w: rng
-                                .gen_range(
-                                    (bb.left_top.w - remote_radius as i64)
-                                        ..=(bb.right_bottom.w + remote_radius as i64),
-                                )
-                                .clamp(0, w as i64),
-                            h: rng
-                                .gen_range(
-                                    (bb.left_top.h - remote_radius as i64)
-                                        ..=(bb.right_bottom.h + remote_radius as i64),
-                                )
-                                .clamp(0, h as i64),
-                        };
-                        if bb.collides_with_circle(test_click, remote_radius) {
-                            // We must hit self, regardless of how many other bbs we might hit
-                            let bbs = &bbs;
-                            let hits = count_collisions_single(&bbs, remote_radius, test_click) + 1;
-                            if hits > best_hits {
-                                best_click = test_click;
-                                best_hits = hits;
-                            }
-                        }
-                    }
-                    current_clicks.push(best_click);
-                    /*if current_clicks.len() > best_clicks.len() && !best_clicks.is_empty() {
-                        break;
-                    }*/
-                    // Remove anything hit by the most recent click
-                    bbs.retain(|bb| {
-                        if let Some(click) = current_clicks.last() {
-                            if bb.collides_with_circle(*click, remote_radius) {
-                                return false;
-                            }
-                        }
-                        true
-                    });
-                }
-                clicks.lock().unwrap().push(current_clicks);
-            }));
-        }
-    });
-
-    // Take the found clicks out
-    let v = Arc::try_unwrap(clicks).unwrap().into_inner().unwrap();
-    let mut counts = v.iter().map(|bucket| bucket.len()).collect::<Vec<_>>();
-    counts.sort();
-
-    println!("Threads found {:#?} clicks in {:?}", counts, it.elapsed());
-    v.into_iter().min_by_key(|bucket| bucket.len()).unwrap()
+#[derive(Debug)]
+struct Gui {
+    scan_debug: bool,
+    scan_red: bool,
 }
 
-fn count_collisions_single(bbs: &[BoundingBox], remote_radius: u32, click: Coord) -> usize {
-    let mut ct = 0;
-    for bb in bbs {
-        if bb.collides_with_circle(click, remote_radius) {
-            ct += 1;
+impl Default for Gui {
+    fn default() -> Self {
+        Gui {
+            scan_debug: true,
+            scan_red: true,
         }
     }
-    ct
+}
+
+impl eframe::App for Gui {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.checkbox(&mut self.scan_debug, "Scan Debug");
+            ui.checkbox(&mut self.scan_red, "Scan Red");
+            let butt = egui::Button::new("Shoot");
+            //let butt = butt.fill(egui::Rgba::from_rgb(0.6, 0.2, 0.2));
+            let butt = ui.add_sized(egui::vec2(84.3, 42.3), butt);
+            if butt.clicked() {
+                let debug = self.scan_debug;
+                let red = self.scan_red;
+                let img = capture_image();
+                let clicks = process_image_into_clicks(img, debug, red);
+                click_arty(&clicks).unwrap();
+            }
+        });
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    println!("Spawned");
-    let mut img = capture_image();
-    let mut debug_img = img.clone();
-    println!("Got image");
-
-    let clicks = get_debug_spawner_clicks(&debug_img);
-    let worm_clicks = get_debug_worm_clicks(&debug_img);
-
-    let spawner_mask = BoundingBox {
-        left_top: Coord { w: -30, h: -11 },
-        right_bottom: Coord { w: 23, h: 31 },
-    };
-    let spawner_bbs = remap_clicks_to_bb(&clicks, &spawner_mask, &mut debug_img);
-
-    let worm_mask = BoundingBox {
-        left_top: Coord { w: -8, h: 1 },
-        right_bottom: Coord { w: 15, h: 22 },
-    };
-    let worm_bbs = remap_clicks_to_bb(&worm_clicks, &worm_mask, &mut debug_img);
-    let mut combined_bbs = spawner_bbs.clone();
-    combined_bbs.extend(&worm_bbs);
-
-    let mut sorted_combined_bbs = combined_bbs.clone();
-    sorted_combined_bbs.sort_by(|s, other| {
-        let res = if s.left_top.h == other.left_top.h {
-            s.left_top.w.cmp(&other.left_top.h)
-        } else {
-            s.left_top.h.cmp(&other.left_top.h)
-        };
-        res
-    });
-
-    let mut random = gen_clicks_from_bbs_rand(
-        &sorted_combined_bbs,
-        ARTY_REMOTE_RADIUS,
-        img.width(),
-        img.height(),
-    );
-    println!("Proccing red");
-    let (bbs, spawner_width) = process_red(&mut img);
-    let mut red_clicks = gen_clicks_from_bbs_rand(
-        &bbs,
-        (spawner_width as f64 * 0.43) as u32,
-        img.width(),
-        img.height(),
-    );
-    remove_clicks_in_excluded_areas(&mut red_clicks);
-    remove_clicks_in_excluded_areas(&mut random);
-    println!(
-        "{} targets, {} clicks with red clicker",
-        bbs.len(),
-        red_clicks.len()
-    );
-
-    println!(
-        "{} targets, {} clicks with random deduper",
-        combined_bbs.len(),
-        random.len()
-    );
-    red_clicks.sort_by(|first, second| first.h.cmp(&(second.h)));
-    if random.len() > 0 {
-        click_arty(&random)?;
-    } else {
-        click_arty(&red_clicks)?;
+    let mut static_images = false;
+    for arg in std::env::args().skip(1) {
+        let now = std::time::Instant::now();
+        let img = ImageReader::open(arg)?.decode()?;
+        let img = img.into_rgb8();
+        let clicks = process_image_into_clicks(img, true, true);
+        println!(
+            "Image processing took {:?} and generated {} clicks",
+            now.elapsed(),
+            clicks.len()
+        );
+        // If user provides list of images, don't run the normal gui
+        static_images = true;
     }
-
+    if !static_images {
+        let mut options = eframe::NativeOptions::default();
+        options.initial_window_size = Some(egui::vec2(100., 100.));
+        eframe::run_native(
+            "Iron Dome",
+            options,
+            Box::new(|_cc| Box::new(Gui::default())),
+        );
+    }
     Ok(())
+}
+
+fn process_image_into_clicks(mut img: RgbImage, scan_debug: bool, scan_red: bool) -> Vec<Coord> {
+    if scan_debug {
+        let mut debug_img = img.clone();
+
+        let debug_spawner_positions = find_spawner_positions(&debug_img);
+        let debug_worm_positions = find_worm_positions(&debug_img);
+
+        let spawner_mask = BoundingBox {
+            left_top: Coord { w: -30, h: -11 },
+            right_bottom: Coord { w: 23, h: 31 },
+        };
+        let spawner_bbs =
+            remap_positions_to_bb(&debug_spawner_positions, &spawner_mask, &mut debug_img);
+
+        let worm_mask = BoundingBox {
+            left_top: Coord { w: -8, h: 1 },
+            right_bottom: Coord { w: 15, h: 22 },
+        };
+        let worm_bbs = remap_positions_to_bb(&debug_worm_positions, &worm_mask, &mut debug_img);
+        let mut combined_bbs = spawner_bbs;
+        combined_bbs.extend(&worm_bbs);
+        combined_bbs.sort_by(|s, other| {
+            let res = if s.left_top.h == other.left_top.h {
+                s.left_top.w.cmp(&other.left_top.h)
+            } else {
+                s.left_top.h.cmp(&other.left_top.h)
+            };
+            res
+        });
+
+        let mut debug_clicks =
+            gen_clicks_from_bbs_rand(&combined_bbs, ARTY_REMOTE_RADIUS, img.width(), img.height());
+        remove_clicks_in_excluded_areas(&mut debug_clicks);
+        println!(
+            "Debug found {} targets, generated {} clicks",
+            combined_bbs.len(),
+            debug_clicks.len()
+        );
+        if !debug_clicks.is_empty() {
+            return debug_clicks;
+        }
+    }
+    if scan_red {
+        let (bbs, spawner_width) = process_red(&mut img);
+        let mut red_clicks = gen_clicks_from_bbs_rand(
+            &bbs,
+            (spawner_width as f64 * 0.43) as u32,
+            img.width(),
+            img.height(),
+        );
+        /*let mut red_clicks = gen_clicks_from_bbs_fixed(
+            &bbs,
+            (spawner_width as f64 * 0.43) as u32,
+            img.width(),
+            img.height(),
+        );*/
+        remove_clicks_in_excluded_areas(&mut red_clicks);
+        //remove_clicks_in_excluded_areas(&mut alt_red_clicks);
+        //dbg!(alt_red_clicks.len());
+        red_clicks.sort_by(|first, second| first.h.cmp(&(second.h)));
+        println!(
+            "Red found {} targets, generated {} clicks",
+            bbs.len(),
+            red_clicks.len()
+        );
+        return red_clicks;
+    }
+    vec![]
 }
 
 fn remove_clicks_in_excluded_areas(clicks: &mut Vec<Coord>) {
@@ -232,18 +192,10 @@ fn capture_image() -> RgbImage {
         .collect::<Vec<u8>>();
     let geometry = c.geometry();
 
-    #[allow(unused_variables)]
-    let i = RgbImage::from_raw(geometry.0, geometry.1, bytes).unwrap();
-    //i.save("red.png").unwrap();
-
-    let i = ImageReader::open("hard.png")
-        .unwrap()
-        .decode()
-        .unwrap()
-        .to_rgb8();
-    i
+    RgbImage::from_raw(geometry.0, geometry.1, bytes).unwrap()
 }
 
+#[allow(dead_code)]
 fn draw_bbs(bbs: &[BoundingBox]) {
     let mut i = RgbImage::new(SCREEN_W as u32, SCREEN_H as u32);
     for bb in bbs {
@@ -281,34 +233,4 @@ fn draw_bbs(bbs: &[BoundingBox]) {
         }
     }
     i.save("bbs.png").unwrap();
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::debug::get_debug_enemy_clicks;
-    use crate::legit::process_red;
-    use crate::ImageReader;
-
-    #[test]
-    fn test_scan_rects() {
-        let mut i = ImageReader::open("zoom/z10.png")
-            .unwrap()
-            .decode()
-            .unwrap()
-            .into_rgb8();
-        let bbs = process_red(&mut i);
-        println!("Found {} targets from red", bbs.0.len());
-    }
-
-    #[test]
-    fn test_img_readstuff() {
-        let i = ImageReader::open("zoom/z1.png")
-            .unwrap()
-            .decode()
-            .unwrap()
-            .to_rgb8();
-
-        let clicks = get_debug_enemy_clicks(&i);
-        println!("Found {} enemy targets", clicks.len());
-    }
 }

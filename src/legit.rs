@@ -1,28 +1,21 @@
-use crate::draw_bbs;
 use crate::BoundingBox;
 use crate::Coord;
 use image::Rgb;
 use image::RgbImage;
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 /// Tries to generate bounding boxes of enemies based on a screenshot of the map view of the game.
 /// Works better the more zoomed in you are.
 pub fn process_red(i: &mut RgbImage) -> (Vec<BoundingBox>, i64) {
     let mut bbs = scan_rects(i, 3);
-    i.save("masked_bbs.png").unwrap();
     let spawner_bb = deduce_spawner_size(&bbs);
     println!("Deduced w {}", spawner_bb.w());
     bbs.extend(scan_rects_of_size(i, &spawner_bb));
-    i.save("masked_bbs2.png").unwrap();
     bbs.extend(scan_rects(i, 1));
-    i.save("masked_bbs3.png").unwrap();
     bbs.extend(scan_isolated_rects(i, &spawner_bb));
-    i.save("masked_bbs4.png").unwrap();
     bbs.extend(scan_rect_any_ratio(i, 3));
-    i.save("masked_bbs5.png").unwrap();
     bbs.retain(|bb| bb.area() as f64 > spawner_bb.area() as f64 / 5.0);
-    draw_bbs(&bbs);
-
     (bbs, spawner_bb.w())
 }
 
